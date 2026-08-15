@@ -1,0 +1,15 @@
+:root { font-family:Inter,"SF Pro Display","PingFang SC",sans-serif; color:#172033; background:#f9fbff; font-synthesis:none; }
+body { width:320px; margin:0; }
+#app { padding:18px; }
+header { display:flex; align-items:center; gap:11px; padding-bottom:15px; border-bottom:1px solid #e8ebf2; }
+.mark { display:grid; place-items:center; width:39px; height:39px; border-radius:13px; color:#fff; background:linear-gradient(145deg,#fb7299,#ff9abb); box-shadow:0 7px 18px rgba(251,114,153,.25); }
+h1,p { margin:0; }
+h1 { font-size:16px; line-height:1.2; }
+header p { margin-top:3px; color:#8b95a6; font-size:10px; }
+main { padding-top:16px; }
+.step { display:flex; align-items:center; gap:10px; margin:9px 0; color:#596579; font-size:11px; }
+.step b { display:grid; place-items:center; width:22px; height:22px; border-radius:50%; color:#00a1d6; background:#e9f8fd; font-size:10px; }
+button { display:flex; justify-content:space-between; align-items:center; width:100%; height:42px; margin-top:17px; padding:0 15px; border:0; border-radius:12px; color:#fff; background:linear-gradient(135deg,#168cb5,#00a1d6); box-shadow:0 8px 18px rgba(0,161,214,.2); cursor:pointer; font:700 11px Inter,"PingFang SC",sans-serif; }
+button:hover { filter:brightness(.98); transform:translateY(-1px); }
+#hint { margin-top:10px; color:#9ba4b2; font-size:9px; text-align:center; }
+#hint.error { color:#d24569; }
