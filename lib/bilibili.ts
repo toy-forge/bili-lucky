@@ -304,13 +304,15 @@ export async function collectParticipants(options: {
 }
 
 export async function followsCurrentUser(mid: string): Promise<boolean> {
-  let data: { relation?: { attribute?: number } };
+  let data: { be_relation?: { attribute?: number } };
   try {
     data = await api('/x/space/wbi/acc/relation', { mid }, true);
   } catch {
     data = await api('/x/web-interface/relation', { mid });
   }
-  const attribute = Number(data.relation?.attribute ?? 0);
+  // `relation` is the logged-in account following the target; `be_relation` is the
+  // target following the logged-in account, which is the direction we need here.
+  const attribute = Number(data.be_relation?.attribute ?? 0);
   return (attribute & 2) === 2;
 }
 
