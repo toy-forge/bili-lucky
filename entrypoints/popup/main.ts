@@ -1,10 +1,10 @@
 import './popup.css';
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
-  <header><span class="mark">✦</span><div><h1>Bili Lucky</h1><p>动态评论 · 关注者抽奖</p></div></header>
+  <header><span class="mark">✦</span><div><h1>Bili Lucky</h1><p>动态互动 · 公平抽奖</p></div></header>
   <main>
     <div class="step"><b>1</b><span>打开任意 B 站动态详情页</span></div>
-    <div class="step"><b>2</b><span>低频收集、去重并开始抽奖</span></div>
+    <div class="step"><b>2</b><span>设置规则、浏览照片墙并抽奖</span></div>
     <button id="open" type="button">在当前动态中打开 <span>→</span></button>
     <p id="hint">需要先登录 B 站账号</p>
   </main>

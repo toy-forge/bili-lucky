@@ -3,12 +3,21 @@ export interface Participant {
   name: string;
   avatar: string;
   comments: string[];
+  forwards: string[];
+}
+
+export type ParticipationSource = 'comments' | 'forwards' | 'both';
+
+export interface UserStats {
+  following?: number;
+  followers?: number;
+  dynamics?: number;
 }
 
 export interface DynamicMeta {
   dynamicId: string;
-  oid: string;
-  type: number;
+  oid?: string;
+  type?: number;
   authorMid?: string;
 }
 
@@ -111,13 +120,11 @@ export async function getDynamicMeta(): Promise<DynamicMeta> {
       modules?: { module_author?: { mid?: number } };
   }}>('/x/polymer/web-dynamic/v1/detail', { id: dynamicId });
   const basic = data.item?.basic;
-  if (!basic?.comment_id_str || basic.comment_type === undefined) {
-    throw new Error('没有找到这条动态对应的评论区，可能评论区已关闭');
-  }
+  if (!data.item) throw new Error('无法读取这条动态，可能动态已被删除或不可见');
   return {
     dynamicId,
-    oid: basic.comment_id_str,
-    type: basic.comment_type,
+    oid: basic?.comment_id_str,
+    type: basic?.comment_type,
     authorMid: data.item?.modules?.module_author?.mid
       ? String(data.item.modules.module_author.mid)
       : undefined,
@@ -128,7 +135,9 @@ class RequestPacer {
   private first = true;
   requests = 0;
 
-  constructor(private readonly baseDelayMs: number) {}
+  private readonly baseDelayMs: number;
+
+  constructor(baseDelayMs: number) { this.baseDelayMs = baseDelayMs; }
 
   async before(signal: AbortSignal): Promise<void> {
     if (this.first) {
@@ -141,14 +150,18 @@ class RequestPacer {
   }
 }
 
-function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
+export function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) return reject(new DOMException('已停止', 'AbortError'));
-    const timer = window.setTimeout(resolve, ms);
-    signal.addEventListener('abort', () => {
+    const onAbort = () => {
       window.clearTimeout(timer);
       reject(new DOMException('已停止', 'AbortError'));
-    }, { once: true });
+    };
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener('abort', onAbort, { once: true });
   });
 }
 
@@ -172,6 +185,7 @@ function addReply(
       name: raw.member?.uname || `用户 ${mid}`,
       avatar: raw.member?.avatar || '',
       comments: [message],
+      forwards: [],
     });
   }
   return 1;
@@ -187,16 +201,17 @@ function addForward(raw: RawForward, participants: Map<string, Participant>): nu
   const info = raw.desc?.user_profile?.info;
   const mid = String(card?.user?.uid || info?.uid || raw.desc?.uid || '');
   if (!mid || mid === '0') return 0;
-  const forwardText = `转发：${card?.item?.content?.trim() || '（无转发文案）'}`;
+  const forwardText = card?.item?.content?.trim() || '（无转发文案）';
   const existing = participants.get(mid);
   if (existing) {
-    if (!existing.comments.includes(forwardText)) existing.comments.push(forwardText);
+    if (!existing.forwards.includes(forwardText)) existing.forwards.push(forwardText);
   } else {
     participants.set(mid, {
       mid,
       name: card?.user?.uname || info?.uname || `用户 ${mid}`,
       avatar: card?.user?.face || info?.face || '',
-      comments: [forwardText],
+      comments: [],
+      forwards: [forwardText],
     });
   }
   return 1;
@@ -205,12 +220,13 @@ function addForward(raw: RawForward, participants: Map<string, Participant>): nu
 export async function collectParticipants(options: {
   meta: DynamicMeta;
   includeReplies: boolean;
-  includeForwards: boolean;
+  source: ParticipationSource;
   delayMs: number;
   signal: AbortSignal;
   onProgress: (progress: CollectProgress) => void;
-}): Promise<{ participants: Participant[]; comments: number; requests: number; warning?: string }> {
-  const { meta, includeReplies, includeForwards, signal, onProgress } = options;
+}): Promise<{ participants: Participant[]; comments: number; forwards: number; requests: number; warning?: string }> {
+  const { meta, includeReplies, source, signal, onProgress } = options;
+  if (source !== 'forwards' && (!meta.oid || meta.type === undefined)) throw new Error('没有找到这条动态对应的评论区，可能评论区已关闭');
   const pacer = new RequestPacer(options.delayMs);
   const participants = new Map<string, Participant>();
   const seenReplies = new Set<string>();
@@ -220,7 +236,7 @@ export async function collectParticipants(options: {
   let totalHint: number | undefined;
   let warning: string | undefined;
 
-  for (let page = 1; page <= 50_000; page += 1) {
+  if (source !== 'forwards') for (let page = 1; page <= 50_000; page += 1) {
     await pacer.before(signal);
     onProgress({ requests: pacer.requests, comments, forwards, participants: participants.size, totalHint, phase: `读取主评论第 ${page} 页` });
     const data = await api<ReplyPage>('/x/v2/reply/wbi/main', {
@@ -232,13 +248,14 @@ export async function collectParticipants(options: {
       seek_rpid: '',
       web_location: 1315875,
     }, true);
+    signal.throwIfAborted();
     totalHint = data.cursor?.all_count ?? totalHint;
     const roots = data.replies ?? [];
 
     for (const root of roots) {
       comments += addReply(root, participants, seenReplies);
       const inline = root.replies ?? [];
-      for (const child of inline) comments += addReply(child, participants, seenReplies);
+      if (includeReplies) for (const child of inline) comments += addReply(child, participants, seenReplies);
 
       const rootId = String(root.rpid_str || root.rpid || '');
       const remaining = (root.rcount ?? 0) - inline.length;
@@ -255,6 +272,7 @@ export async function collectParticipants(options: {
             pn: subPage,
             ps: 20,
           });
+          signal.throwIfAborted();
           const replies = sub.replies ?? [];
           for (const child of replies) comments += addReply(child, participants, seenReplies);
           if (replies.length < 20) break;
@@ -275,7 +293,7 @@ export async function collectParticipants(options: {
     offset = nextOffset;
   }
 
-  if (includeForwards) {
+  if (source !== 'comments') {
     let forwardOffset = '';
     for (let page = 1; page <= 50_000; page += 1) {
       await pacer.before(signal);
@@ -286,6 +304,7 @@ export async function collectParticipants(options: {
         false,
         'vc',
       );
+      signal.throwIfAborted();
       const items = data.items ?? [];
       for (const item of items) forwards += addForward(item, participants);
       onProgress({ requests: pacer.requests, comments, forwards, participants: participants.size, totalHint, phase: '整理转发并去重' });
@@ -300,19 +319,44 @@ export async function collectParticipants(options: {
     }
   }
 
-  return { participants: [...participants.values()], comments: comments + forwards, requests: pacer.requests, warning };
+  signal.throwIfAborted();
+  return { participants: filterParticipants([...participants.values()], source), comments, forwards, requests: pacer.requests, warning };
 }
 
-export async function followsCurrentUser(mid: string): Promise<boolean> {
+export function filterParticipants(participants: Participant[], source: ParticipationSource): Participant[] {
+  return participants.filter((person) => source === 'both'
+    ? person.comments.length > 0 && person.forwards.length > 0
+    : source === 'comments' ? person.comments.length > 0 : person.forwards.length > 0);
+}
+
+export async function getUserStats(mid: string, beforeRequest: () => Promise<void>): Promise<UserStats> {
+  await beforeRequest();
+  const data = await api<{ following?: number; follower?: number }>('/x/relation/stat', { vmid: mid });
+  return { following: validCount(data.following), followers: validCount(data.follower) };
+}
+
+export async function getDynamicCount(mid: string): Promise<number | undefined> {
+  const data = await api<{ dynamic?: number }>('/x/space/navnum', { mid });
+  return validCount(data.dynamic);
+}
+
+function validCount(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+export async function followsCurrentUser(mid: string, beforeRequest?: () => Promise<void>): Promise<boolean> {
   let data: { be_relation?: { attribute?: number } };
   try {
+    await beforeRequest?.();
     data = await api('/x/space/wbi/acc/relation', { mid }, true);
   } catch {
+    await beforeRequest?.();
     data = await api('/x/web-interface/relation', { mid });
   }
   // `relation` is the logged-in account following the target; `be_relation` is the
   // target following the logged-in account, which is the direction we need here.
-  const attribute = Number(data.be_relation?.attribute ?? 0);
+  if (typeof data.be_relation?.attribute !== 'number') throw new Error('关注关系接口未返回有效数据，请稍后重试');
+  const attribute = data.be_relation.attribute;
   return (attribute & 2) === 2;
 }
 
